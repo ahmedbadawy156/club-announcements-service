@@ -1,0 +1,204 @@
+### infra/check.sh (2026-11-24T17:41:15Z)
+== Announcements service on Floci: http://be7a7c6d6c.execute-api.localhost.floci.io:4566
+PASS  function state                                             Active
+PASS  function runtime                                           nodejs24.x
+PASS  function role                                              arn:aws:iam::000000000000:role/club-announcements-role
+PASS  GET /api/health through API Gateway                        {"service":"announcements","status":"ok","runtime":"lambda","tokenKey":"set"}
+PASS  unlisted method refused by the gateway                     404
+PASS  unknown path refused by the gateway                        404
+PASS  gateway refusal body                                       {"message":"Not Found"}
+PASS  CORS: allowed origin gets its own origin back              http://localhost:4566
+PASS  CORS: other origin gets no header                          
+PASS  CORS preflight from the site allows PATCH                  yes
+PASS  no private key in the function configuration               0
+PASS  CloudWatch Logs has request lines                          yes
+PASS  log lines never contain a query string                     0
+== 13 passed, 0 failed
+
+### tests/announcements.sh (2026-11-24T17:41:36Z)
+== Announcements: access, tokens, validation, feed (http://be7a7c6d6c.execute-api.localhost.floci.io:4566)
+PASS  T1 GET feed without a token                                401
+PASS  T1 error code                                              sign_in_required
+PASS  T1 POST without a token                                    401
+PASS  T1 PATCH without a token                                   401
+PASS  T1 malformed Authorization header                          401
+PASS  T6 expired token on the feed                               401
+PASS  T6 wrongkey token on the feed                              401
+PASS  T6 none token on the feed                                  401
+PASS  T6 hs256 token on the feed                                 401
+PASS  T6 tampered token on the feed                              401
+PASS  T6 wrongaud token on the feed                              401
+PASS  T6 wrongiss token on the feed                              401
+PASS  T6 alg:none 'officer' token cannot publish                 401
+PASS  T6 member token edited to say officer cannot publish       401
+PASS  T6 error code                                              invalid_token
+PASS  officer publishes an announcement                          201
+PASS  new announcement is current, version 1                     current 1
+PASS  author name comes from the token                           Test Officer
+PASS  internal fields are not returned                           
+PASS  author id stored from the token, not the body              aaaaaaaa-0000-4000-8000-000000000001
+PASS  member reads the feed                                      200
+PASS  member sees the announcement                               yes
+PASS  body newlines kept as text                                 First meeting on Monday.|Bring a friend.
+PASS  members do not get the edit version                        
+PASS  T2 member cannot publish                                   403
+PASS  T2 error code                                              officer_only
+PASS  T2 member cannot edit                                      403
+PASS  T2 member cannot archive                                   403
+PASS  T2 member cannot see scheduled items                       403
+PASS  T2 member cannot see archived items                        403
+PASS  T2 announcement unchanged after member attempts            Welcome back 1
+PASS  T2 a role in the body is ignored                           403
+PASS  T3 empty title                                             400 title
+PASS  T3 title only spaces                                       400 title
+PASS  T3 title too long (121)                                    400 title
+PASS  T3 title as an object                                      400 title
+PASS  T3 title as an array                                       400 title
+PASS  T3 missing body                                            400 body
+PASS  T3 body too long (2001)                                    400 body
+PASS  T3 control character in title                              400 title
+PASS  T3 pinned not a boolean                                    400 pinned
+PASS  T3 publishAt not a date                                    400 publishAt
+PASS  T3 publishAt without a time zone                           400 publishAt
+PASS  T3 publishAt in the past                                   400 publishAt
+PASS  T3 publishAt more than a year ahead                        400 publishAt
+PASS  T3 expiresAt before publishAt                              400 expiresAt
+PASS  T3 expiresAt already passed                                400 expiresAt
+PASS  T3 unknown field                                           400 authorId
+PASS  T3 body is a JSON array                                    400
+PASS  T3 malformed JSON                                          400
+PASS  T3 malformed JSON error code                               invalid_json
+PASS  T3 body over 8 KB                                          413
+PASS  T3 invalid id in the path                                  400
+PASS  T3 invalid view                                            400
+PASS  T3 invalid limit                                           400
+PASS  T3 nothing stored by the invalid requests                  1
+PASS  T8 script-like title accepted as text                      201
+PASS  T8 title stored exactly as typed                           <script>alert(1)</script><img src=x onerror=alert(2)>
+PASS  T8 title returned exactly (no HTML decoding or encoding)   <script>alert(1)</script><img src=x onerror=alert(2)>
+PASS  T8 response is JSON, not HTML                              application/json
+PASS  officer schedules an announcement for tomorrow             201
+PASS  it is scheduled                                            scheduled
+PASS  member feed does not show scheduled items                  no
+PASS  officer sees it in the scheduled view                      yes
+PASS  once publishAt passes, members see it (no scheduler needed) yes
+PASS  officer publishes one that expires                         201
+PASS  expired announcement leaves the member feed                no
+PASS  officer sees it in the expired view                        expired
+== 68 passed, 0 failed
+
+### tests/announcement-rules.sh (2026-11-24T17:42:23Z)
+== Announcement rules (http://be7a7c6d6c.execute-api.localhost.floci.io:4566)
+PASS  pin counter starts at 0 (no other pinned items)            0
+PASS  three pinned announcements accepted                        3
+PASS  a fourth pinned announcement is refused                    409
+PASS  error code                                                 pin_limit_reached
+PASS  nothing stored for the refused pin                         3
+PASS  pinning an existing one at the limit is refused            409
+PASS  and it stays unpinned, version 1                           false 1
+PASS  member feed: pinned first, then newest                     true,true,true,false
+PASS  newest unpinned comes right after the pinned ones          9119a14d-5ff1-4b64-82a2-52697520a397
+PASS  officer unpins one                                         200
+PASS  counter goes down to 2                                     2
+PASS  the freed slot can be used                                 200
+PASS  archiving a pinned one frees its slot                      200
+PASS  archived: state and unpinned                               archived false
+PASS  counter is 2 after archive                                 2
+PASS  archived item gone from the member feed                    no
+PASS  officer sees it in the archived view                       yes
+PASS  archived announcement cannot be edited                     409
+PASS  error code                                                 announcement_archived
+PASS  the archived record is kept, not deleted                   archived
+PASS  archive cannot be combined with other changes              400
+PASS  status other than archived is refused                      400
+PASS  one pin slot left before the race                          2
+PASS  race for the last slot: one 200, one 409                   200 409
+PASS  counter never passes 3                                     3
+PASS  exactly 3 pinned in the feed                               3
+PASS  edit with the current version                              200
+PASS  version goes up to 2                                       2
+PASS  edit with a stale version is refused                       409
+PASS  error code                                                 version_conflict
+PASS  the newer edit was kept                                    Edited once
+PASS  updatedBy recorded from the token                          aaaaaaaa-0000-4000-8000-000000000001
+PASS  two officers edit the same version at once: one wins       200 409
+PASS  version is 3 after the race (only one write)               3
+PASS  PATCH with no changes                                      400
+PASS  PATCH without a version                                    400
+PASS  unknown announcement                                       404
+PASS  a scheduled one can be moved                               200
+PASS  cannot move it into the past                               400
+PASS  cannot expire before it is published                       400
+PASS  can set an expiry after publishAt                          200
+PASS  can clear the expiry with null                             200
+PASS  expiry removed                                             null
+PASS  a published one cannot be rescheduled                      409
+PASS  error code                                                 already_published
+PASS  an expired announcement cannot be pinned                   409
+PASS  error code                                                 announcement_expired
+PASS  an expired one can get a new expiry (brought back)         200
+PASS  and is current again                                       current
+PASS  cleanup recounts the pins                                  0
+== 50 passed, 0 failed
+
+### tests/activities.sh (2026-11-24T17:42:48Z)
+== Activities (http://be7a7c6d6c.execute-api.localhost.floci.io:4566)
+PASS  T1 list without a token                                    401
+PASS  T1 record without a token                                  401
+PASS  T6 expired officer token cannot record                     401
+PASS  T6 member token edited to officer cannot record            401
+PASS  T2 member cannot record an activity                        403
+PASS  T2 nothing stored by the member                            0
+PASS  officer records an activity for yesterday's event          201
+PASS  recorded by the name in the token                          Test Officer
+PASS  internal fields are not returned                           
+PASS  member can browse activities                               200
+PASS  member sees it                                             80491093-b79e-484e-9ec3-31f18fdba716
+PASS  an activity for today's event is allowed                   201
+PASS  a second activity for the same event is refused            409
+PASS  error code                                                 activity_exists
+PASS  same event id in capitals is the same event                409
+PASS  4 officers record the same event at once: one 201          201 409 409 409
+PASS  only one activity stored for that event                    1
+PASS  T3 event in the future (not finished)                      400 eventDate
+PASS  T3 date that does not exist                                400 eventDate
+PASS  T3 date in the wrong format                                400 eventDate
+PASS  T3 event more than 10 years ago                            400 eventDate
+PASS  T3 event id not a UUID                                     400 eventId
+PASS  T3 event title too short                                   400 eventTitle
+PASS  T3 summary too short                                       400 summary
+PASS  T3 event id as an object                                   400 eventId
+PASS  T3 unknown field                                           400 recordedBy
+PASS  T3 malformed JSON                                          400
+PASS  T3 invalid limit                                           400
+PASS  T3 invalid cursor                                          400
+PASS  T3 unknown cursor id                                       400
+PASS  T8 script-like summary accepted as text                    201
+PASS  T8 summary returned exactly as typed                       <img src=x onerror=alert(1)> great night
+PASS  page 1 has 2 items                                         2
+PASS  newest event first                                         yes
+PASS  page 1 gives a cursor                                      yes
+PASS  following the cursors visits every activity once           7
+PASS  list is sorted by event date, newest first                 yes
+PASS  the one-per-event claim items never show in the list       0
+== 38 passed, 0 failed
+
+### tests/iam.sh (2026-11-24T17:43:19Z)
+== IAM least-privilege test for role club-announcements-role
+PASS  Floci IAM enforcement is on                                true
+PASS  admin keys cannot assume the function's role               denied
+PASS  role: put Announcements                                    allowed
+PASS  role: get Announcements                                    allowed
+PASS  role: query StatusIndex                                    allowed
+PASS  role: put Activities                                       allowed
+PASS  role: delete Announcements                                 denied
+PASS  role: scan Announcements                                   denied
+PASS  role: update Activities                                    denied
+PASS  role: delete Activities                                    denied
+PASS  role: read ClubUsers                                       denied
+PASS  role: put AuditLog                                         denied
+PASS  role: list tables                                          denied
+PASS  role: read Membership secret                               denied
+== 14 passed, 0 failed
+
+== total: 183 passed, 0 failed
