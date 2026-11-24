@@ -1,0 +1,21 @@
+{
+  "name": "club-announcements-service",
+  "version": "1.0.0",
+  "description": "Campus Club Management: Announcements and Club Activity service (Express on AWS Lambda, deployed to Floci)",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "zip": "node scripts/zip-lambda.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1175.0",
+    "@aws-sdk/lib-dynamodb": "^3.1175.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.0",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "serverless-http": "^3.2.0"
+  }
+}
