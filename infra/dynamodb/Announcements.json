@@ -1,0 +1,20 @@
+{
+  "TableName": "Announcements",
+  "BillingMode": "PAY_PER_REQUEST",
+  "AttributeDefinitions": [
+    { "AttributeName": "announcementId", "AttributeType": "S" },
+    { "AttributeName": "status", "AttributeType": "S" },
+    { "AttributeName": "publishAt", "AttributeType": "S" }
+  ],
+  "KeySchema": [{ "AttributeName": "announcementId", "KeyType": "HASH" }],
+  "GlobalSecondaryIndexes": [
+    {
+      "IndexName": "StatusIndex",
+      "KeySchema": [
+        { "AttributeName": "status", "KeyType": "HASH" },
+        { "AttributeName": "publishAt", "KeyType": "RANGE" }
+      ],
+      "Projection": { "ProjectionType": "ALL" }
+    }
+  ]
+}

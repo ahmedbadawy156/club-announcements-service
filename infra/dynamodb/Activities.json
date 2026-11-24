@@ -1,0 +1,20 @@
+{
+  "TableName": "Activities",
+  "BillingMode": "PAY_PER_REQUEST",
+  "AttributeDefinitions": [
+    { "AttributeName": "activityId", "AttributeType": "S" },
+    { "AttributeName": "feed", "AttributeType": "S" },
+    { "AttributeName": "sortKey", "AttributeType": "S" }
+  ],
+  "KeySchema": [{ "AttributeName": "activityId", "KeyType": "HASH" }],
+  "GlobalSecondaryIndexes": [
+    {
+      "IndexName": "FeedIndex",
+      "KeySchema": [
+        { "AttributeName": "feed", "KeyType": "HASH" },
+        { "AttributeName": "sortKey", "KeyType": "RANGE" }
+      ],
+      "Projection": { "ProjectionType": "ALL" }
+    }
+  ]
+}

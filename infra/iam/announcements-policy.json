@@ -1,0 +1,37 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AnnouncementsReadWriteNoDelete",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:Query"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-east-1:000000000000:table/Announcements",
+        "arn:aws:dynamodb:us-east-1:000000000000:table/Announcements/index/*"
+      ]
+    },
+    {
+      "Sid": "ActivitiesAppendAndReadOnly",
+      "Effect": "Allow",
+      "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query"],
+      "Resource": [
+        "arn:aws:dynamodb:us-east-1:000000000000:table/Activities",
+        "arn:aws:dynamodb:us-east-1:000000000000:table/Activities/index/*"
+      ]
+    },
+    {
+      "Sid": "OwnLogGroupOnly",
+      "Effect": "Allow",
+      "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+      "Resource": [
+        "arn:aws:logs:us-east-1:000000000000:log-group:/aws/lambda/club-announcements-api",
+        "arn:aws:logs:us-east-1:000000000000:log-group:/aws/lambda/club-announcements-api:*"
+      ]
+    }
+  ]
+}

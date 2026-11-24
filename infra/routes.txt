@@ -1,0 +1,15 @@
+# API Gateway route allow-list for club-announcements-http-api.
+# One "METHOD /path" per line. Anything not listed is refused by the gateway
+# with 404 before the Lambda function runs. deploy.sh creates missing routes
+# and deletes routes that are no longer listed.
+# OPTIONS routes let browsers ask the CORS question before POST/PATCH or
+# requests that carry an Authorization header.
+GET /api/health
+GET /api/announcements
+POST /api/announcements
+OPTIONS /api/announcements
+PATCH /api/announcements/{id}
+OPTIONS /api/announcements/{id}
+GET /api/activities
+POST /api/activities
+OPTIONS /api/activities
