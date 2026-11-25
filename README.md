@@ -19,6 +19,10 @@ on. It follows the Lab 7 pattern and the same structure as
   feed is read.
 - **Officers** record what happened at a finished event (one record per
   event). **Members** browse past activities, newest event first.
+- **Automatic posts:** when the Events service publishes an event, a
+  "New event" announcement appears by itself; when it cancels one, a
+  "Cancelled" announcement appears and the "New event" post is archived.
+  These arrive through EventBridge and an SQS queue (below).
 
 Sign-in is done by `club-membership-service`, which issues the login token.
 This service only **verifies** that token with Membership's public key and
@@ -36,16 +40,32 @@ Lambda       club-announcements-api        Express app (serverless-http)
    |-- DynamoDB  Announcements (StatusIndex), Activities (FeedIndex)
    |-- CloudWatch Logs  /aws/lambda/club-announcements-api
    '-- IAM role club-announcements-role    least privilege, enforced by Floci
+
+Automatic posts from the Events service
+Events -> EventBridge bus campus-club-bus
+          rule club-events-to-announcements (EventPublished, EventCancelled from club.events)
+       -> SQS queue club-announcements-inbox   (queue policy: only that rule may send;
+          |                                      visibility 20 s; after 3 failed tries ->)
+          |-> SQS dead-letter queue club-announcements-inbox-dlq  (kept 14 days)
+       -> Lambda club-announcements-worker     (batches of 10, failures reported one by one;
+                                                own role: read the inbox, get/put/update Announcements)
+       -> DynamoDB Announcements                (origin "events", eventId, author = the officer)
 ```
 
-## AWS services used (5)
+The worker is safe against what SQS does: a message delivered twice finds its
+post already there (the id comes from the event id and the message kind), and
+a "published" message that arrives after the cancellation posts nothing.
+
+## AWS services used (7)
 
 | Service | Use | Evidence |
 |---|---|---|
-| Lambda | Runs the Express app | `aws lambda get-function`, `evidence/floci-resources.txt` |
+| Lambda | Runs the Express app; `club-announcements-worker` turns queue messages into posts | `aws lambda get-function`, `evidence/floci-resources.txt` |
 | API Gateway (HTTP API) | Route allow-list and entry point | `aws apigatewayv2 get-routes`; unlisted DELETE refused (`check.sh`) |
 | DynamoDB | Two tables, transactions and conditional writes | `infra/dynamodb/`, test results |
-| IAM | Role limited to the two tables and its own log group; no deletes | `infra/iam/announcements-policy.json`, `tests/iam.sh` |
+| SQS | Inbox queue with a dead-letter queue (redrive after 3 tries), queue policy for the bus rule only | `tests/from-events.sh` |
+| EventBridge | Rule `club-events-to-announcements` on `campus-club-bus` | `tests/from-events.sh` |
+| IAM | API role limited to the two tables and its own log group, no deletes; worker role limited to its inbox and get/put/update on Announcements | `infra/iam/`, `tests/iam.sh` |
 | CloudWatch Logs | One line per request; denied requests counted | `evidence/floci-resources.txt` |
 
 No Secrets Manager: this service has no secret. It holds only Membership's
@@ -115,7 +135,7 @@ Floci first** (this service needs its public key).
 
 ```
 docker compose -f infra/floci/docker-compose.yml up -d   # same Floci as Membership
-bash infra/deploy.sh                                      # tables, role, Lambda, API
+bash infra/deploy.sh                                      # tables, roles, Lambdas, API, queues, rule
 bash tests/run-all.sh                                     # every test suite
 bash infra/collect-evidence.sh                            # saves evidence/
 ```
@@ -137,7 +157,8 @@ To run the API on your PC instead: copy `backend/.env.example` to
 | `tests/announcements.sh` | T1, T2, T3, T6, T8, scheduling and expiry |
 | `tests/announcement-rules.sh` | Pin limit and race, order, optimistic locking and race, archive, date rules |
 | `tests/activities.sh` | Roles, validation, one per event and race, paging, T8 |
-| `tests/iam.sh` | Least privilege with a probe function using the same role |
+| `tests/from-events.sh` | Queue, DLQ, rule and worker wiring; automatic posts; duplicates, out-of-order, filtered and bad messages (DLQ); end to end through Events. About 4 minutes |
+| `tests/iam.sh` | Least privilege for the API role and the worker role, with a probe function |
 
 `docs/security-tests.md` maps every check to the proposal's T1 to T10.
 Test tokens are signed by `tests/helpers.js` with Membership's key read from
@@ -164,4 +185,8 @@ evidence/  test results, Floci resource listing, secret scan
   because services do not call each other (proposal Section 5.3).
 - The feed reads all current items (up to 1000) and sorts them in the
   function; fine for one club, not for very large data.
+- Automatic posts expire when the event starts. If an officer edits an
+  automatic post, a later cancellation still archives it.
+- Messages in the dead-letter queue are not replayed automatically; an
+  officer would look at them with the AWS CLI.
 - Floci only; IAM evaluation is an emulation and may differ from AWS in details.

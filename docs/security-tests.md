@@ -17,6 +17,7 @@ service. Every check runs against the Floci deployment; results are saved in
 | T9 CORS and route exposure | 10 | DELETE and unknown paths stopped by API Gateway (404, Lambda never runs); a foreign Origin gets no Access-Control-Allow-Origin; the site's preflight is allowed | `check.sh` |
 | Threat 3 Stale role | 3 | Accepted risk: a demoted officer's token keeps its role here for up to 15 minutes (documented in the README) | n/a |
 | Threat 9 IAM least privilege | 9 | With Floci IAM enforcement on, the role may read and write its two tables, and is refused deleting announcements, scanning, updating or deleting activities, Membership's tables and secret, the audit log and ListTables | `iam.sh` |
+| Messaging (EventBridge, SQS) | 5, 6, 9 | Only the club bus rule may send to the inbox (queue policy); the worker accepts only `club.events` messages with valid ids, dates and text; bad messages go to the dead-letter queue after 3 tries and are logged by id only; duplicates and out-of-order messages never create extra posts; the worker's own role can read only its inbox and get/put/update announcements; the API role cannot touch the queues or the bus | `from-events.sh`; `iam.sh`: "worker role: …", "API role: … inbox" |
 | Threat 11 Rebuild | 11 | `infra/deploy.sh` rebuilds tables, role, function and routes on a clean Floci and is safe to run again | `infra/deploy.sh`, `check.sh` |
 
 T7 (brute force) and T10 (join-request limits) belong to the Membership

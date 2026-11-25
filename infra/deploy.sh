@@ -5,7 +5,8 @@
 # Needs the Membership service deployed on the same Floci first, because
 # this service verifies Membership's tokens with its PUBLIC key.
 # Steps: tables -> token public key -> IAM role + policy -> zip -> Lambda ->
-# API Gateway (routes, stage, permission) -> saves the address to infra/out/api.env
+# API Gateway (routes, stage, permission) -> SQS queue + DLQ -> worker Lambda
+# + queue mapping -> EventBridge rule -> saves the address to infra/out/api.env
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source infra/config.sh
@@ -18,7 +19,7 @@ step() { echo "== $*"; }
 }
 mkdir -p infra/out
 
-step "1/6 DynamoDB tables"
+step "1/9 DynamoDB tables"
 for def in infra/dynamodb/*.json; do
   table=$(basename "$def" .json)
   if ! "$AWS" dynamodb describe-table --table-name "$table" >/dev/null 2>&1; then
@@ -28,7 +29,7 @@ for def in infra/dynamodb/*.json; do
   fi
 done
 
-step "2/6 Membership's token public key"
+step "2/9 Membership's token public key"
 # The public key is not a secret. It is fetched from Membership's public
 # endpoint at deploy time and given to the function as an environment
 # variable, because a Lambda function on Floci cannot reach
@@ -52,7 +53,7 @@ fs.writeFileSync("infra/out/public-key.b64", Buffer.from(j.publicKey).toString("
 const fp = require("crypto").createHash("sha256").update(j.publicKey).digest("hex").slice(0, 16);
 console.log("   public key fingerprint (sha256, first 16): " + fp);'
 
-step "3/6 IAM role $ROLE and its policy"
+step "3/9 IAM role $ROLE and its policy"
 if ! "$AWS" iam get-role --role-name "$ROLE" >/dev/null 2>&1; then
   "$AWS" iam create-role --role-name "$ROLE" \
     --assume-role-policy-document file://infra/iam/trust-policy.json >/dev/null
@@ -60,10 +61,10 @@ fi
 "$AWS" iam put-role-policy --role-name "$ROLE" --policy-name "$ROLE_POLICY" \
   --policy-document file://infra/iam/announcements-policy.json
 
-step "4/6 Install and zip the backend"
+step "4/9 Install and zip the backend"
 (cd backend && npm install --omit=dev --no-audit --no-fund --loglevel=error && npm run zip --silent)
 
-step "5/6 Lambda function $FUNCTION"
+step "5/9 Lambda function $FUNCTION"
 # Environment as a JSON file: the base64 key contains "=" and "/", which the
 # CLI shorthand syntax cannot carry.
 CORS_ORIGINS="$CORS_ORIGINS" node -e '
@@ -91,7 +92,7 @@ else
   "$AWS" lambda wait function-active-v2 --function-name "$FUNCTION"
 fi
 
-step "6/6 API Gateway $API_NAME"
+step "6/9 API Gateway $API_NAME"
 API_ID=$("$AWS" apigatewayv2 get-apis --query "Items[?Name=='$API_NAME'].ApiId | [0]" --output text)
 if [ -z "$API_ID" ] || [ "$API_ID" = "None" ]; then
   API_ID=$("$AWS" apigatewayv2 create-api --name "$API_NAME" --protocol-type HTTP --query ApiId --output text)
@@ -133,6 +134,70 @@ fi
 "$AWS" lambda add-permission --function-name "$FUNCTION" --statement-id apigw-invoke \
   --action lambda:InvokeFunction --principal apigateway.amazonaws.com \
   --source-arn "arn:aws:execute-api:$REGION:$ACCOUNT:$API_ID/*" >/dev/null 2>&1 || true
+
+step "7/9 SQS queue $QUEUE and dead-letter queue $DLQ"
+# A message the worker fails 3 times moves to the DLQ (kept 14 days) instead
+# of being retried for ever. The visibility timeout (20 s) is longer than the
+# worker's timeout (15 s), so a message is never handed out twice at once.
+DLQ_URL=$("$AWS" sqs create-queue --queue-name "$DLQ" \
+  --attributes MessageRetentionPeriod=1209600 --query QueueUrl --output text)
+QUEUE_ARN="arn:aws:sqs:$REGION:$ACCOUNT:$QUEUE"
+DLQ_ARN="arn:aws:sqs:$REGION:$ACCOUNT:$DLQ"
+RULE_ARN="arn:aws:events:$REGION:$ACCOUNT:rule/$BUS/$RULE"
+# Only the club bus rule may send to the inbox (queue policy).
+QUEUE_ARN="$QUEUE_ARN" DLQ_ARN="$DLQ_ARN" RULE_ARN="$RULE_ARN" node -e '
+const { QUEUE_ARN, DLQ_ARN, RULE_ARN } = process.env;
+require("fs").writeFileSync("infra/out/queue-attributes.json", JSON.stringify({
+  VisibilityTimeout: "20",
+  MessageRetentionPeriod: "345600",
+  RedrivePolicy: JSON.stringify({ deadLetterTargetArn: DLQ_ARN, maxReceiveCount: "3" }),
+  Policy: JSON.stringify({ Version: "2012-10-17", Statement: [{
+    Sid: "OnlyTheClubBusRule", Effect: "Allow", Principal: { Service: "events.amazonaws.com" },
+    Action: "sqs:SendMessage", Resource: QUEUE_ARN, Condition: { ArnEquals: { "aws:SourceArn": RULE_ARN } },
+  }] }),
+}));'
+QUEUE_URL=$("$AWS" sqs create-queue --queue-name "$QUEUE" --query QueueUrl --output text)
+"$AWS" sqs set-queue-attributes --queue-url "$QUEUE_URL" --attributes file://infra/out/queue-attributes.json
+
+step "8/9 Worker function $WORKER (reads the queue)"
+if ! "$AWS" iam get-role --role-name "$WORKER_ROLE" >/dev/null 2>&1; then
+  "$AWS" iam create-role --role-name "$WORKER_ROLE" \
+    --assume-role-policy-document file://infra/iam/trust-policy.json >/dev/null
+fi
+"$AWS" iam put-role-policy --role-name "$WORKER_ROLE" --policy-name "$WORKER_POLICY" \
+  --policy-document file://infra/iam/worker-policy.json
+WORKER_ENV='Variables={NODE_ENV=production,ANNOUNCEMENTS_TABLE=Announcements}'
+if "$AWS" lambda get-function --function-name "$WORKER" >/dev/null 2>&1; then
+  "$AWS" lambda update-function-code --function-name "$WORKER" --zip-file fileb://backend/lambda.zip >/dev/null
+  "$AWS" lambda wait function-updated-v2 --function-name "$WORKER"
+  "$AWS" lambda update-function-configuration --function-name "$WORKER" \
+    --timeout 15 --memory-size 256 --environment "$WORKER_ENV" >/dev/null
+  "$AWS" lambda wait function-updated-v2 --function-name "$WORKER"
+else
+  "$AWS" lambda create-function --function-name "$WORKER" \
+    --runtime nodejs24.x --handler worker.handler \
+    --role "arn:aws:iam::$ACCOUNT:role/$WORKER_ROLE" \
+    --zip-file fileb://backend/lambda.zip --timeout 15 --memory-size 256 \
+    --environment "$WORKER_ENV" >/dev/null
+  "$AWS" lambda wait function-active-v2 --function-name "$WORKER"
+fi
+# The queue hands the worker up to 10 messages at a time; failed ones are
+# reported one by one (ReportBatchItemFailures).
+MAPPING=$("$AWS" lambda list-event-source-mappings --function-name "$WORKER" \
+  --event-source-arn "$QUEUE_ARN" --query 'EventSourceMappings[0].UUID' --output text)
+if [ -z "$MAPPING" ] || [ "$MAPPING" = "None" ]; then
+  "$AWS" lambda create-event-source-mapping --function-name "$WORKER" --event-source-arn "$QUEUE_ARN" \
+    --batch-size 10 --function-response-types ReportBatchItemFailures >/dev/null
+  echo "   + queue -> worker mapping"
+fi
+
+step "9/9 EventBridge rule $RULE (bus $BUS -> queue)"
+# The Events service creates the bus; create it here too if Events is not
+# deployed yet, so the order of deploys does not matter.
+"$AWS" events describe-event-bus --name "$BUS" >/dev/null 2>&1 || "$AWS" events create-event-bus --name "$BUS" >/dev/null
+"$AWS" events put-rule --name "$RULE" --event-bus-name "$BUS" \
+  --event-pattern '{"source":["club.events"],"detail-type":["EventPublished","EventCancelled"]}' >/dev/null
+"$AWS" events put-targets --rule "$RULE" --event-bus-name "$BUS" --targets "Id=inbox,Arn=$QUEUE_ARN" >/dev/null
 
 API_URL=$(api_url "$API_ID")
 printf 'API_ID=%s\nAPI_URL=%s\n' "$API_ID" "$API_URL" > infra/out/api.env

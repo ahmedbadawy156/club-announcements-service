@@ -24,6 +24,17 @@ ROLE_POLICY=club-announcements-access
 API_NAME=club-announcements-http-api
 LOG_GROUP=/aws/lambda/$FUNCTION
 
+# Automatic announcements from the Events service:
+#   EventBridge bus -> rule -> SQS queue (+ dead-letter queue) -> worker Lambda
+BUS=campus-club-bus
+RULE=club-events-to-announcements
+QUEUE=club-announcements-inbox
+DLQ=club-announcements-inbox-dlq
+WORKER=club-announcements-worker
+WORKER_ROLE=club-announcements-worker-role
+WORKER_POLICY=club-announcements-worker-access
+WORKER_LOG_GROUP=/aws/lambda/$WORKER
+
 # The Membership service issues the login tokens. deploy.sh reads its API
 # address from here to fetch the PUBLIC key (team guide, Section 8).
 MEMBERSHIP_DIR="${MEMBERSHIP_DIR:-../club-membership-service}"

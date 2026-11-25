@@ -58,6 +58,9 @@ function toPublic(item, nowIso, { includeVersion }) {
     publishAt: item.publishAt,
     expiresAt: item.expiresAt || null,
     authorName: item.authorName,
+    // "events" = posted automatically from the Events service (eventId set).
+    origin: item.origin || "officer",
+    eventId: item.eventId || null,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
   };

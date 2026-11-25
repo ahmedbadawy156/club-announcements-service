@@ -27,19 +27,37 @@ const c=Buffer.alloc(46);c.writeUInt32LE(0x02014b50,0);c.writeUInt16LE(0x0314,4)
 const e=Buffer.alloc(22);e.writeUInt32LE(0x06054b50,0);e.writeUInt16LE(1,8);e.writeUInt16LE(1,10);e.writeUInt32LE(46+name.length,12);e.writeUInt32LE(30+name.length+packed.length,16);
 fs.writeFileSync("infra/out/tmp/iam-probe.zip",Buffer.concat([l,name,packed,c,name,e]));'
 
-"$AWS" lambda delete-function --function-name "$PROBE" >/dev/null 2>&1
-"$AWS" lambda create-function --function-name "$PROBE" --runtime nodejs24.x --handler index.handler \
-  --role "arn:aws:iam::$ACCOUNT:role/$ROLE" --zip-file fileb://infra/out/tmp/iam-probe.zip --timeout 30 >/dev/null
-"$AWS" lambda wait function-active-v2 --function-name "$PROBE"
-"$AWS" lambda invoke --function-name "$PROBE" --cli-read-timeout 300 infra/out/tmp/iam-probe.json >/dev/null
-R=$(cat infra/out/tmp/iam-probe.json)
+# probe ROLE -> results JSON in R
+probe() {
+  "$AWS" lambda delete-function --function-name "$PROBE" >/dev/null 2>&1
+  "$AWS" lambda create-function --function-name "$PROBE" --runtime nodejs24.x --handler index.handler \
+    --role "arn:aws:iam::$ACCOUNT:role/$1" --zip-file fileb://infra/out/tmp/iam-probe.zip --timeout 30 >/dev/null
+  "$AWS" lambda wait function-active-v2 --function-name "$PROBE"
+  "$AWS" lambda invoke --function-name "$PROBE" --cli-read-timeout 300 infra/out/tmp/iam-probe.json >/dev/null
+  R=$(cat infra/out/tmp/iam-probe.json)
+}
+expect() { # LABEL op:want ...
+  local label=$1 pair op want; shift
+  for pair in "$@"; do
+    op=${pair%%:*}; want=${pair##*:}
+    check "$label: $op" "$want" "$(printf '%s' "$R" | jget "j[\"$op\"]")"
+  done
+}
 
-for pair in "put Announcements:allowed" "get Announcements:allowed" "query StatusIndex:allowed" "put Activities:allowed" \
-            "delete Announcements:denied" "scan Announcements:denied" "update Activities:denied" "delete Activities:denied" \
-            "read ClubUsers:denied" "put AuditLog:denied" "list tables:denied" "read Membership secret:denied"; do
-  op=${pair%%:*}; want=${pair##*:}
-  check "role: $op" "$want" "$(printf '%s' "$R" | jget "j[\"$op\"]")"
-done
+probe "$ROLE"
+expect "API role" "put Announcements:allowed" "get Announcements:allowed" "query StatusIndex:allowed" "put Activities:allowed" \
+  "delete Announcements:denied" "scan Announcements:denied" "update Activities:denied" "delete Activities:denied" \
+  "read ClubUsers:denied" "put AuditLog:denied" "list tables:denied" "read Membership secret:denied" \
+  "send to inbox:denied" "inbox attributes:denied" "receive from DLQ:denied" "put event on the club bus:denied"
+
+# The worker (reads the queue, writes announcements) has its own, smaller role.
+check "admin keys cannot assume the worker's role" denied \
+  "$("$AWS" sts assume-role --role-arn "arn:aws:iam::$ACCOUNT:role/$WORKER_ROLE" --role-session-name t >/dev/null 2>&1 && echo allowed || echo denied)"
+probe "$WORKER_ROLE"
+expect "worker role" "put Announcements:allowed" "get Announcements:allowed" "update Announcements:allowed" "inbox attributes:allowed" \
+  "query StatusIndex:denied" "delete Announcements:denied" "scan Announcements:denied" "put Activities:denied" \
+  "send to inbox:denied" "receive from DLQ:denied" "put event on the club bus:denied" \
+  "read ClubUsers:denied" "list tables:denied" "read Membership secret:denied"
 
 # Clean up the probe and the items it wrote.
 "$AWS" lambda delete-function --function-name "$PROBE" >/dev/null 2>&1
