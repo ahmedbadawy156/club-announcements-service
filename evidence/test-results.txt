@@ -1,4 +1,4 @@
-### infra/check.sh (2026-11-24T17:41:15Z)
+### infra/check.sh (2026-11-26T00:15:47Z)
 == Announcements service on Floci: http://be7a7c6d6c.execute-api.localhost.floci.io:4566
 PASS  function state                                             Active
 PASS  function runtime                                           nodejs24.x
@@ -15,7 +15,7 @@ PASS  CloudWatch Logs has request lines                          yes
 PASS  log lines never contain a query string                     0
 == 13 passed, 0 failed
 
-### tests/announcements.sh (2026-11-24T17:41:36Z)
+### tests/announcements.sh (2026-11-26T00:16:09Z)
 == Announcements: access, tokens, validation, feed (http://be7a7c6d6c.execute-api.localhost.floci.io:4566)
 PASS  T1 GET feed without a token                                401
 PASS  T1 error code                                              sign_in_required
@@ -87,7 +87,7 @@ PASS  expired announcement leaves the member feed                no
 PASS  officer sees it in the expired view                        expired
 == 68 passed, 0 failed
 
-### tests/announcement-rules.sh (2026-11-24T17:42:23Z)
+### tests/announcement-rules.sh (2026-11-26T00:16:52Z)
 == Announcement rules (http://be7a7c6d6c.execute-api.localhost.floci.io:4566)
 PASS  pin counter starts at 0 (no other pinned items)            0
 PASS  three pinned announcements accepted                        3
@@ -97,7 +97,7 @@ PASS  nothing stored for the refused pin                         3
 PASS  pinning an existing one at the limit is refused            409
 PASS  and it stays unpinned, version 1                           false 1
 PASS  member feed: pinned first, then newest                     true,true,true,false
-PASS  newest unpinned comes right after the pinned ones          9119a14d-5ff1-4b64-82a2-52697520a397
+PASS  newest unpinned comes right after the pinned ones          48b85ab3-272e-42cc-9a19-e35d2d5f3ec2
 PASS  officer unpins one                                         200
 PASS  counter goes down to 2                                     2
 PASS  the freed slot can be used                                 200
@@ -141,7 +141,7 @@ PASS  and is current again                                       current
 PASS  cleanup recounts the pins                                  0
 == 50 passed, 0 failed
 
-### tests/activities.sh (2026-11-24T17:42:48Z)
+### tests/activities.sh (2026-11-26T00:17:15Z)
 == Activities (http://be7a7c6d6c.execute-api.localhost.floci.io:4566)
 PASS  T1 list without a token                                    401
 PASS  T1 record without a token                                  401
@@ -153,7 +153,7 @@ PASS  officer records an activity for yesterday's event          201
 PASS  recorded by the name in the token                          Test Officer
 PASS  internal fields are not returned                           
 PASS  member can browse activities                               200
-PASS  member sees it                                             80491093-b79e-484e-9ec3-31f18fdba716
+PASS  member sees it                                             cd7077a7-8c4c-40fd-91c4-9b1e129464af
 PASS  an activity for today's event is allowed                   201
 PASS  a second activity for the same event is refused            409
 PASS  error code                                                 activity_exists
@@ -183,22 +183,80 @@ PASS  list is sorted by event date, newest first                 yes
 PASS  the one-per-event claim items never show in the list       0
 == 38 passed, 0 failed
 
-### tests/iam.sh (2026-11-24T17:43:19Z)
+### tests/from-events.sh (2026-11-26T00:17:41Z)
+== Automatic announcements from Events (http://be7a7c6d6c.execute-api.localhost.floci.io:4566)
+PASS  rule listens for EventPublished and EventCancelled from club.events {"source":["club.events"],"detail-type":["EventPublished","EventCancelled"]}
+PASS  rule target is the inbox queue                             arn:aws:sqs:us-east-1:000000000000:club-announcements-inbox
+PASS  inbox: failed 3 times -> dead-letter queue                 arn:aws:sqs:us-east-1:000000000000:club-announcements-inbox-dlq|3
+PASS  inbox: visibility timeout longer than the worker's timeout yes
+PASS  inbox policy: only the club bus rule may send              events.amazonaws.com|sqs:SendMessage|arn:aws:events:us-east-1:000000000000:rule/campus-club-bus/club-events-to-announcements
+PASS  DLQ keeps messages 14 days                                 1209600
+PASS  queue -> worker mapping enabled, batches of 10, failures reported one by one Enabled|10|ReportBatchItemFailures
+PASS  worker runs under its own role, not the API's              arn:aws:iam::000000000000:role/club-announcements-worker-role
+PASS  put EventPublished on the bus                              0
+PASS  worker posts 'New event'                                   New event: Robotics night/published
+PASS    members see it in the feed                               yes
+PASS    marked as automatic, linked to the event                 events|117ea543-4660-4c75-807b-951e0b6b08c9|Club Events (automatic)
+PASS    expires when the event starts                            yes
+PASS    body gives time and place                                yes
+PASS    not pinned                                               false
+PASS    the author is the officer who published                  aaaaaaaa-0000-4000-8000-000000000001
+PASS  the same message twice more: still exactly one post        New event: Robotics night/published
+PASS  an officer pins the automatic post                         200
+PASS  put EventCancelled on the bus                              0
+PASS  worker posts 'Cancelled' and archives 'New event'          Cancelled: Robotics night/published;New event: Robotics night/archived
+PASS    the pin counter is given back                            0
+PASS    the feed shows only the cancellation                     Cancelled: Robotics night
+PASS    a repeated cancellation changes nothing                  Cancelled: Robotics night/published;New event: Robotics night/archived
+PASS  cancellation first: 'Cancelled' posted                     Cancelled: Chess club/published
+PASS  the late 'published' message posts nothing                 Cancelled: Chess club/published
+PASS  an event that already started: no post                     
+PASS  SeatPromoted is not for Announcements (the rule filters it) 
+PASS  the right kind from another source: rule does not match    
+PASS  3 bad messages -> dead-letter queue after 3 tries each     3
+PASS    and they left the inbox                                  0
+PASS    nothing was posted for them                              
+PASS    worker logged each failure with its message id           yes
+PASS    worker logs never contain message bodies                 0
+PASS  Events API publish -> 'New event' post                     New event: End to end night/published
+PASS  Events API cancel -> 'Cancelled' post, 'New event' archived Cancelled: End to end night/published;New event: End to end night/archived
+== 35 passed, 0 failed
+
+### tests/iam.sh (2026-11-26T00:21:25Z)
 == IAM least-privilege test for role club-announcements-role
 PASS  Floci IAM enforcement is on                                true
 PASS  admin keys cannot assume the function's role               denied
-PASS  role: put Announcements                                    allowed
-PASS  role: get Announcements                                    allowed
-PASS  role: query StatusIndex                                    allowed
-PASS  role: put Activities                                       allowed
-PASS  role: delete Announcements                                 denied
-PASS  role: scan Announcements                                   denied
-PASS  role: update Activities                                    denied
-PASS  role: delete Activities                                    denied
-PASS  role: read ClubUsers                                       denied
-PASS  role: put AuditLog                                         denied
-PASS  role: list tables                                          denied
-PASS  role: read Membership secret                               denied
-== 14 passed, 0 failed
+PASS  API role: put Announcements                                allowed
+PASS  API role: get Announcements                                allowed
+PASS  API role: query StatusIndex                                allowed
+PASS  API role: put Activities                                   allowed
+PASS  API role: delete Announcements                             denied
+PASS  API role: scan Announcements                               denied
+PASS  API role: update Activities                                denied
+PASS  API role: delete Activities                                denied
+PASS  API role: read ClubUsers                                   denied
+PASS  API role: put AuditLog                                     denied
+PASS  API role: list tables                                      denied
+PASS  API role: read Membership secret                           denied
+PASS  API role: send to inbox                                    denied
+PASS  API role: inbox attributes                                 denied
+PASS  API role: receive from DLQ                                 denied
+PASS  API role: put event on the club bus                        denied
+PASS  admin keys cannot assume the worker's role                 denied
+PASS  worker role: put Announcements                             allowed
+PASS  worker role: get Announcements                             allowed
+PASS  worker role: update Announcements                          allowed
+PASS  worker role: inbox attributes                              allowed
+PASS  worker role: query StatusIndex                             denied
+PASS  worker role: delete Announcements                          denied
+PASS  worker role: scan Announcements                            denied
+PASS  worker role: put Activities                                denied
+PASS  worker role: send to inbox                                 denied
+PASS  worker role: receive from DLQ                              denied
+PASS  worker role: put event on the club bus                     denied
+PASS  worker role: read ClubUsers                                denied
+PASS  worker role: list tables                                   denied
+PASS  worker role: read Membership secret                        denied
+== 33 passed, 0 failed
 
-== total: 183 passed, 0 failed
+== total: 237 passed, 0 failed
